@@ -1,0 +1,5 @@
+data/
+data_pdf/
+tmp/
+nimts_rag.db
+__pycache__/
