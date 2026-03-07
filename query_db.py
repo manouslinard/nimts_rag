@@ -80,20 +80,20 @@ def question_db(user_query, k=3):
     # returns the most relevant guide (all of it):
     return db_helper.select_all_nimts_text_docs(best_match), best_file_paths
 
-HISTORY_FILE = "chat_history.json"
+# HISTORY_FILE = "chat_history.json"
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
-            return json.load(f)
-    return []
+# def load_history():
+#     if os.path.exists(HISTORY_FILE):
+#         with open(HISTORY_FILE, "r") as f:
+#             return json.load(f)
+#     return []
 
-def save_history(history):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history[-6:], f)
+# def save_history(history):
+#     with open(HISTORY_FILE, "w") as f:
+#         json.dump(history[-6:], f)
 
 def query_db(user_query, base_server_url: str = None):
-    history = load_history()
+    # history = load_history()
     result = question_db(user_query)
     context, ranks = result[0], result[1]
 
@@ -113,7 +113,8 @@ def query_db(user_query, base_server_url: str = None):
         {user_query}
     """
 
-    messages = history + [{"role": "user", "content": prompt}]
+    # messages = history + [{"role": "user", "content": prompt}]
+    messages = [{"role": "user", "content": prompt}]
 
     response = ollama.chat(
         model="gemma3:4b-it-q4_K_M",   # larger context window.
@@ -132,17 +133,17 @@ def query_db(user_query, base_server_url: str = None):
     answer = f"\n{links_section}"
     answer += '=' * 15 + '\n\n' + f"Συνοπτική απάντηση ΑΙ βοηθού:\n{response['message']['content']}".strip()
 
-    history.append({"role": "user", "content": user_query})
-    history.append({"role": "assistant", "content": answer})
-    save_history(history)
+    # history.append({"role": "user", "content": user_query})
+    # history.append({"role": "assistant", "content": answer})
+    # save_history(history)
 
     print(f"\nAssistant: {answer}")
     return answer
 
-def clear_history():
-    if os.path.exists(HISTORY_FILE):
-        os.remove(HISTORY_FILE)
-        print("History cleared.")
+# def clear_history():
+#     if os.path.exists(HISTORY_FILE):
+#         os.remove(HISTORY_FILE)
+#         print("History cleared.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
