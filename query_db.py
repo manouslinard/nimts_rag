@@ -1,6 +1,8 @@
 import os
+import re
 import argparse
-import ollama
+from ollama import AsyncClient
+import asyncio
 from db_helper import DB_Helper
 import json
 from sklearn.feature_extraction.text import CountVectorizer
@@ -8,6 +10,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
 from pathlib import Path
 import urllib.parse
+
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.strip()
 
 def make_clickable_link(path, base_url=None):
     web_path = path.replace("\\", "/")
@@ -32,13 +39,14 @@ def find_most_similar(x, string_set):
     most_similar_index = similarities.argmax()
     return list(string_set)[most_similar_index]
 
-def question_db(user_query, k=3):
+async def question_db(user_query, k=3):
     db_helper = DB_Helper()
+    client = AsyncClient()
     answer_dict = db_helper.select_total_llm_allfiles()     
 
     s = ""
     for i, (key, value) in enumerate(answer_dict.items()):
-        s += f"ΤΙΤΛΟΣ ΕΓΓΡΑΦΟΥ #{i}: {os.path.basename(key)}\nΠΕΡΙΓΡΑΦΗ: {value}\n----------\n"
+        s += f"ΤΙΤΛΟΣ ΕΓΓΡΑΦΟΥ #{i}: {os.path.basename(key)}\nΠΕΡΙΓΡΑΦΗ: {value.strip()}\n----------\n\n"
 
     system_instruction = (
         "Είσαι ένας έμπειρος τεχνικός IT. Ανάλυσε ΠΡΟΣΕΚΤΙΚΑ τη λίστα εγγράφων που θα σου δοθεί. "
@@ -46,7 +54,7 @@ def question_db(user_query, k=3):
         "Απάντησε ΑΠΟΚΛΕΙΣΤΙΚΑ σε JSON μορφή χωρίς άλλο κείμενο."
     )
 
-    user_content = f"""ΕΡΩΤΗΣΗ ΧΡΗΣΤΗ: "{user_query}"
+    user_content = f"""ΕΡΩΤΗΣΗ ΧΡΗΣΤΗ: "{clean_text(user_query)}"
 
     ΛΙΣΤΑ ΕΓΓΡΑΦΩΝ ΠΡΟΣ ΑΝΑΛΥΣΗ:
     {s}
@@ -54,7 +62,7 @@ def question_db(user_query, k=3):
     ΟΔΗΓΙΑ: Βρες τους {k} πιο σχετικούς τίτλους. 
     Απάντησε σε JSON: {{ "1": "Τίτλος 1", "2": "Τίτλος 2" ... }}"""
 
-    response = ollama.chat(
+    response = await client.chat(
         model="gemma3:4b-it-q4_K_M",
         messages=[
             {"role": "system", "content": system_instruction},
@@ -63,8 +71,7 @@ def question_db(user_query, k=3):
         format="json",
         options={
             "temperature": 0,
-            "seed": 42,
-            "num_ctx": 16384
+            "seed": 42
         }
     )
 
@@ -76,26 +83,13 @@ def question_db(user_query, k=3):
         best_file_paths.append(find_most_similar(str(json.loads(answer_raw)[str(i)]), all_files))
     
     best_match = best_file_paths[0]
-    # print(best_match)
     # returns the most relevant guide (all of it):
     return db_helper.select_all_nimts_text_docs(best_match), best_file_paths
 
-# HISTORY_FILE = "chat_history.json"
-
-# def load_history():
-#     if os.path.exists(HISTORY_FILE):
-#         with open(HISTORY_FILE, "r") as f:
-#             return json.load(f)
-#     return []
-
-# def save_history(history):
-#     with open(HISTORY_FILE, "w") as f:
-#         json.dump(history[-6:], f)
-
-def query_db(user_query, base_server_url: str = None):
-    # history = load_history()
-    result = question_db(user_query)
+async def query_db(user_query, base_server_url: str = None):
+    result = await question_db(user_query)
     context, ranks = result[0], result[1]
+    client = AsyncClient()
 
     prompt = f"""
         Είσαι ένας έμπειρος τεχνικός υποστήριξης IT. 
@@ -110,18 +104,15 @@ def query_db(user_query, base_server_url: str = None):
         {context}
 
         Ερώτηση Χρήστη:
-        {user_query}
+        {clean_text(user_query)}
     """
 
-    # messages = history + [{"role": "user", "content": prompt}]
-    messages = [{"role": "user", "content": prompt}]
-
-    response = ollama.chat(
-        model="gemma3:4b-it-q4_K_M",   # larger context window.
-        messages=messages,
+    response = await client.chat( # Προσθήκη await
+        model="gemma3:4b-it-q4_K_M",
+        messages=[{"role": "user", "content": prompt}],
         options={
-            "temperature": 0, # Μηδενικό temperature για deterministic απαντήσεις
-            "seed": 42        # Το ίδιο seed για σταθερότητα
+            "temperature": 0,
+            "seed": 42
         }
     )
     
@@ -133,26 +124,15 @@ def query_db(user_query, base_server_url: str = None):
     answer = f"\n{links_section}"
     answer += '=' * 15 + '\n\n' + f"Συνοπτική απάντηση ΑΙ βοηθού:\n{response['message']['content']}".strip()
 
-    # history.append({"role": "user", "content": user_query})
-    # history.append({"role": "assistant", "content": answer})
-    # save_history(history)
-
     print(f"\nAssistant: {answer}")
     return answer
 
-# def clear_history():
-#     if os.path.exists(HISTORY_FILE):
-#         os.remove(HISTORY_FILE)
-#         print("History cleared.")
-
-if __name__ == "__main__":
+if __name__ == "__main__":    
     parser = argparse.ArgumentParser()
     parser.add_argument("-q", "--query", type=str, help="The question to ask.")
-    # parser.add_argument("--clear", action="store_true", help="Clear chat history.")
     
     args = parser.parse_args()
 
-    # if args.clear:
-    #     clear_history()
     if args.query:
-        query_db(args.query)
+        # Αντί για query_db(args.query), χρησιμοποιούμε το asyncio.run()
+        asyncio.run(query_db(args.query))

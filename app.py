@@ -230,7 +230,7 @@ async def home():
 async def ask(data: Question, request: Request):
     host_ip = request.url.hostname 
     server = f"{host_ip}:{PORT}"
-    answer = query_db(user_query=data.question, base_server_url=server)
+    answer = await query_db(user_query=data.question, base_server_url=server)
     return {"answer": answer}
 
 # @app.post("/clear")
