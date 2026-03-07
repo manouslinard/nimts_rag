@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
-from query_db import query_db, clear_history
+from query_db import query_db
 
 app = FastAPI()
 
@@ -130,6 +130,24 @@ HTML = """
                 font-size: 12px;
             }
         }
+
+        .loading:after {
+            content: '.';
+            animation: dots 1s steps(5, end) infinite;
+            }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60% { content: '...'; }
+            80%, 100% { content: ''; }
+        }
+
+        .loading-row {
+            font-style: italic;
+            color: #666;
+            margin: 10px 0;
+        }        
     </style>
 </head>
 <body>
@@ -144,45 +162,53 @@ HTML = """
     </div>
 
     <script>
+        // Define these once at the top
         const chat = document.getElementById("chat");
-        const input = document.getElementById("question");
+        const input = document.getElementById("question"); // Changed from "input" to "question"
 
         async function send() {
-            const q = input.value.trim();
-            if (!q) return;
+            const text = input.value.trim();
+            if (!text) return;
 
-            // user message
-            chat.innerHTML += `
-                <div class="row user">
-                    <div class="msg">${q}</div>
-                </div>`;
+            // 1. Show user message
+            chat.innerHTML += `<div class="row user"><div class="msg">${text}</div></div>`;
             input.value = "";
+            
+            // 2. Add the loading indicator
+            const loadingId = "loading-" + Date.now();
+            chat.innerHTML += `
+                <div class="row loading-row" id="${loadingId}">
+                    Generating LLM response<span class="loading"></span>
+                </div>`;
             chat.scrollTop = chat.scrollHeight;
 
             try {
-                const res = await fetch("/ask", {
+                const response = await fetch("/ask", {
                     method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({question: q})
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question: text })
                 });
-                const data = await res.json();
+                const data = await response.json();
 
-                // bot message
+                // 3. Remove the loading indicator
+                const loadingElement = document.getElementById(loadingId);
+                if (loadingElement) loadingElement.remove();
+
+                // 4. Show bot message
                 chat.innerHTML += `
                     <div class="row bot">
                         <div class="msg">${data.answer}</div>
                     </div>`;
             } catch (e) {
+                const loadingElement = document.getElementById(loadingId);
+                if (loadingElement) loadingElement.remove();
                 chat.innerHTML += `<div class="row bot"><div class="msg" style="color:red">Error connecting to server.</div></div>`;
             }
             chat.scrollTop = chat.scrollHeight;
         }
 
         async function clearChat() {
-            if(confirm("Clear chat history?")) {
-                await fetch("/clear", { method: "POST" });
-                chat.innerHTML = "";
-            }
+            chat.innerHTML = "";
         }
 
         function handleEnter(event) {
@@ -197,7 +223,7 @@ HTML = """
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    clear_history()
+    # clear_history()
     return HTML
 
 @app.post("/ask")
@@ -207,10 +233,10 @@ async def ask(data: Question, request: Request):
     answer = query_db(user_query=data.question, base_server_url=server)
     return {"answer": answer}
 
-@app.post("/clear")
-async def clear():
-    clear_history()
-    return {"status": "cleared"}
+# @app.post("/clear")
+# async def clear():
+#     clear_history()
+#     return {"status": "cleared"}
 
 @app.get('/prompt')
 async def question_llm(user_query: str):

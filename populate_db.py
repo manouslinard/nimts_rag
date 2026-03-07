@@ -139,20 +139,26 @@ def process_entire_library(root_folder, db: DB_Helper, skip_sources=None):
 
 def split_save_chunks(library_data: dict, db: DB_Helper, chunk_size=800):
     for file_path, full_text in library_data.items():
-        start_idx, chunk_id = 0, 0
         saved_chunks = db.select_all_nimts_chunkids_docs(file_path)
-        while start_idx < len(full_text):
-            end_idx = start_idx+chunk_size
-            chunk_content = full_text[start_idx:end_idx]
-
-            if chunk_id not in saved_chunks:   # adds document only if it does not exist.
-                db.insert_nimts_docs(NimtsDocsItem(file_path, chunk_content, chunk_id))
-            
-            if end_idx >= len(full_text):
-                break
-            start_idx += chunk_size
-            chunk_id += 1
-
+        
+        # Αν είναι PDF, σπάσε το σε chunks
+        if file_path.lower().endswith('.pdf'):
+            start_idx, chunk_id = 0, 0
+            while start_idx < len(full_text):
+                end_idx = start_idx + chunk_size
+                chunk_content = full_text[start_idx:end_idx]
+                if chunk_id not in saved_chunks:
+                    db.insert_nimts_docs(NimtsDocsItem(file_path, chunk_content, chunk_id))
+                if end_idx >= len(full_text): break
+                start_idx += chunk_size
+                chunk_id += 1
+        
+        # Αν είναι TXT, αποθήκευσέ το όλο μαζί σαν 1 chunk (id: 0)
+        elif file_path.lower().endswith('.txt'):
+            if 0 not in saved_chunks:
+                item = NimtsDocsItem(file_path, full_text, 0)
+                db.insert_nimts_docs(item)
+                db.insert_llm_summ(item)    # also inserts it as chunk explanation to the llm, since it is short.
 
 def explain_saved_chunks(library_data:dict, db: DB_Helper):
     split_save_chunks(library_data, db)
@@ -165,6 +171,7 @@ def explain_saved_chunks(library_data:dict, db: DB_Helper):
     Αποστολή: Προσδιόρισε το κύριο τεχνικό ζήτημα (δες και τον τίτλο) και συνοπτικά τη διαδικασία που περιγράφεται. Χρησιμοποίησε το πολύ 3 προτάσεις.
 
     Περιορισμοί:
+    - Αν υπάρχει ήδη ΣΥΝΤΟΜΗ ΠΕΡΙΛΗΨΗ στο απόσπασμα, χρησιμοποίησε την ίδια ακριβώς ως απάντηση!
     - Χρησιμοποίησε επαγγελματικό ύφος.
     - Μην επαναλαμβάνεις την ερώτηση.
 
@@ -184,7 +191,7 @@ def explain_saved_chunks(library_data:dict, db: DB_Helper):
                 formatted_prompt = base_prompt.format(filename=filename, text=text)
 
                 response = ollama.chat(
-                    model="gemma2",
+                    model="gemma3:4b-it-q4_K_M",
                     messages=[{"role": "user", "content": formatted_prompt}]
                 )
 
@@ -222,13 +229,13 @@ def create_total_summary(library_data:dict, db: DB_Helper):
         formatted_prompt = prompt_template.format(filename=filename, text=all_file_summaries)
 
         response = ollama.chat(
-            model="gemma2",
+            model="gemma3:4b-it-q4_K_M",
             messages=[{"role": "user", "content": formatted_prompt}]
         )
         time.sleep(1)
         formatted_prompt = prompt_template.format(filename=filename, text=response["message"]["content"])
         response_2 = ollama.chat(
-            model="gemma2",
+            model="gemma3:4b-it-q4_K_M",
             messages=[{"role":"user", "content": formatted_prompt}]
         )
 

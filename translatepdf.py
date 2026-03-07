@@ -18,7 +18,7 @@ from docling_core.types.doc import ImageRefMode
 
 def create_picture_description_options() -> PictureDescriptionApiOptions:
     OLLAMA_URL = "http://localhost:11434"
-    VLM_MODEL = "qwen3-vl:latest"
+    VLM_MODEL = "gemma3:4b-it-q4_K_M"
     VLM_PROMPT = "Describe this image in one short sentence. If an action is performed, focus only on that action. " \
                 "Output only the description, no conversational filler."
     return PictureDescriptionApiOptions(

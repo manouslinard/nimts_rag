@@ -37,8 +37,8 @@ def question_db(user_query, k=3):
     answer_dict = db_helper.select_total_llm_allfiles()     
 
     s = ""
-    for key, value in answer_dict.items():
-        s += f"ΤΙΤΛΟΣ: {key}\nΠΕΡΙΓΡΑΦΗ: {value}\n---\n"
+    for i, (key, value) in enumerate(answer_dict.items()):
+        s += f"ΤΙΤΛΟΣ ΕΓΓΡΑΦΟΥ #{i}: {os.path.basename(key)}\nΠΕΡΙΓΡΑΦΗ: {value}\n----------\n"
 
     system_instruction = (
         "Είσαι ένας έμπειρος τεχνικός IT. Ανάλυσε ΠΡΟΣΕΚΤΙΚΑ τη λίστα εγγράφων που θα σου δοθεί. "
@@ -55,7 +55,7 @@ def question_db(user_query, k=3):
     Απάντησε σε JSON: {{ "1": "Τίτλος 1", "2": "Τίτλος 2" ... }}"""
 
     response = ollama.chat(
-        model="gemma2",
+        model="gemma3:4b-it-q4_K_M",
         messages=[
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": user_content}
@@ -116,7 +116,7 @@ def query_db(user_query, base_server_url: str = None):
     messages = history + [{"role": "user", "content": prompt}]
 
     response = ollama.chat(
-        model="gemma2",   # larger context window.
+        model="gemma3:4b-it-q4_K_M",   # larger context window.
         messages=messages,
         options={
             "temperature": 0, # Μηδενικό temperature για deterministic απαντήσεις
@@ -147,11 +147,11 @@ def clear_history():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-q", "--query", type=str, help="The question to ask.")
-    parser.add_argument("--clear", action="store_true", help="Clear chat history.")
+    # parser.add_argument("--clear", action="store_true", help="Clear chat history.")
     
     args = parser.parse_args()
 
-    if args.clear:
-        clear_history()
-    elif args.query:
+    # if args.clear:
+    #     clear_history()
+    if args.query:
         query_db(args.query)

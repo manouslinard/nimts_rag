@@ -3,3 +3,5 @@ data_pdf/
 tmp/
 nimts_rag.db
 __pycache__/
+chat_history.json
+data_og/
