@@ -48,5 +48,4 @@ Navigate to [http://localhost:5000](http://localhost:5000) to start asking quest
 3. Δεν μπορω να εκτυπωσω στον konica στο μικροβιολογικο. Πως λυνεται αυτο?
 4. Εχω κοκκινη οθονη. Τι μπορω να κανω?
 5. Πως κανω activate τα windows?
-6. Πως αναβαθμίζω τα windows?
-7. Πως φτιαχνω τις ρυθμισεις του zebra barcode?
+6. Πως φτιαχνω τις ρυθμισεις του zebra barcode?
