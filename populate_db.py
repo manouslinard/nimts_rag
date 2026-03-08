@@ -7,13 +7,25 @@ from langchain_core._api import LangChainDeprecationWarning
 warnings.simplefilter("ignore", category=LangChainDeprecationWarning)
 from db_helper import DB_Helper, NimtsDocsItem
 import re
-import pytesseract
 import unicodedata
 import time
 from translatepdf import process_document
 
 import shutil
-from docx2pdf import convert
+import subprocess
+
+def convert(file_path, target_pdf_path):
+    """Function that converts word to pdf using the absolute path to LibreOffice."""
+    soffice_path = r'C:\Program Files\LibreOffice\program\soffice.exe'
+    output_folder = str(Path(target_pdf_path).parent)
+    
+    subprocess.run([
+        soffice_path, 
+        '--headless', 
+        '--convert-to', 'pdf', 
+        str(file_path), 
+        '--outdir', output_folder
+    ], check=True)
 
 def convert_og_data_topdf(source='data/', dest='data_pdf/'):
     source_root = Path(source)
@@ -23,14 +35,14 @@ def convert_og_data_topdf(source='data/', dest='data_pdf/'):
 
     files_to_process = [
         f for f in source_root.rglob("*") 
-        if f.suffix.lower() in ['.docx', '.pdf', '.txt']
+        if f.suffix.lower() in ['.docx', '.doc', '.pdf', '.txt']
         and not f.name.startswith("~$")
     ]
 
     for file_path in files_to_process:
         relative_path = file_path.relative_to(source_root)
         
-        if file_path.suffix.lower() == '.docx':
+        if file_path.suffix.lower() in ['.docx', '.doc']:
             target_path = output_root / relative_path.with_suffix('.pdf')
         else:
             target_path = output_root / relative_path
@@ -41,7 +53,7 @@ def convert_og_data_topdf(source='data/', dest='data_pdf/'):
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if file_path.suffix.lower() == '.docx':
+        if file_path.suffix.lower() in ['.docx', '.doc']:
             print(f"Converting: {file_path.name} -> {target_path.name}")
             try:
                 convert(str(file_path), str(target_path))
@@ -52,15 +64,6 @@ def convert_og_data_topdf(source='data/', dest='data_pdf/'):
             print(f"Copying: {file_path.name}")
             shutil.copy2(file_path, target_path)
 
-def simple_ocr(pil_image):
-    try:
-        text = pytesseract.image_to_string(pil_image, lang="eng+ell")
-        text = text.strip()
-        if text:
-            return f"[OCR_TEXT]\n{text}\n[/OCR_TEXT]"
-        return None
-    except Exception:
-        return None
 
 def clean_text(text):
     text = unicodedata.normalize("NFKD", text)

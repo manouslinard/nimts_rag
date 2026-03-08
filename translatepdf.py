@@ -2,7 +2,6 @@
 # https://www.youtube.com/watch?v=YAgjtZKLVKo&t=575s
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-from pathlib import Path
 from typing import Any
 
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
@@ -66,6 +65,6 @@ def process_document(pdf_path:str):
     )
     return content
 
-if __name__ == "__main__":
-    md_content = process_document(f"test.pdf")
-    print(md_content)
+# if __name__ == "__main__":
+#     md_content = process_document(f"test.pdf")
+#     print(md_content)
