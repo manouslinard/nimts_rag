@@ -1,15 +1,51 @@
 import os
 import re
 import argparse
-from ollama import AsyncClient
 import asyncio
-from db_helper import DB_Helper
-import json
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import urllib.parse
 from pathlib import Path
-import urllib.parse
+import numpy as np
+from ollama import AsyncClient
+from sentence_transformers import SentenceTransformer, util
+from rank_bm25 import BM25Okapi
+
+from db_helper import DB_Helper
+
+# ==========================================
+# 1. DEFINE GLOBALS (Empty at start)
+# ==========================================
+db_helper = None
+filenames = []
+embedding_model = None
+corpus_embeddings = None
+bm25 = None
+
+def tokenize_greek(text):
+    """Βοηθητική συνάρτηση για το BM25 Tokenization"""
+    if not text: return []
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.split()
+
+def initialize_hybrid_retriever():
+    global db_helper, filenames, embedding_model, corpus_embeddings, bm25
+    
+    print("Initializing Hybrid Retriever (Loading Models & Data)...")
+    db_helper = DB_Helper()
+    answer_dict = db_helper.select_total_llm_allfiles()
+
+    filenames = list(answer_dict.keys()) if answer_dict else []
+    summaries = [answer_dict[f] for f in filenames]
+    full_texts = [db_helper.select_all_nimts_text_docs(f) for f in filenames]
+
+    tokenized_corpus = [tokenize_greek(doc) for doc in full_texts]
+    bm25 = BM25Okapi(tokenized_corpus) if tokenized_corpus else None
+
+    embedding_model = SentenceTransformer('intfloat/multilingual-e5-small')
+    if summaries:
+        corpus_embeddings = embedding_model.encode(["passage: " + s for s in summaries], convert_to_tensor=True)
+
+    print("Hybrid Retriever is ready!")
 
 def clean_text(text):
     text = text.lower()
@@ -20,119 +56,114 @@ def make_clickable_link(path, base_url=None):
     web_path = path.replace("\\", "/")
     display_path = Path(path).stem
     if base_url:
-        # WEB VERSION: Standard HTML link
         safe_path = urllib.parse.quote(web_path)
         url = f"http://{base_url.rstrip('/')}/{safe_path}"
         return f'<a href="{url}" target="_blank" style="color: #007bff; text-decoration: underline;">{display_path}</a>'
     else:
-        # TERMINAL VERSION: OSC 8
         abs_path = os.path.abspath(path).replace("\\", "/")
         safe_path = urllib.parse.quote(abs_path)
         url = f"file:///{safe_path}"
         return f"\033]8;;{url}\033\\{path}\033]8;;\033\\"
 
-def find_most_similar(x, string_set):
-    all_strings = [x] + list(string_set)    
-    vectorizer = CountVectorizer().fit_transform(all_strings)
-    vectors = vectorizer.toarray()
-    similarities = cosine_similarity(vectors[0:1], vectors[1:])
-    most_similar_index = similarities.argmax()
-    return list(string_set)[most_similar_index]
-
 async def question_db(user_query, k=3):
-    db_helper = DB_Helper()
-    client = AsyncClient()
-    answer_dict = db_helper.select_total_llm_allfiles()     
+    if not filenames:
+        return "Δεν βρέθηκαν έγγραφα στη βάση.", []
 
-    s = ""
-    for i, (key, value) in enumerate(answer_dict.items()):
-        s += f"ΤΙΤΛΟΣ ΕΓΓΡΑΦΟΥ #{i}: {os.path.basename(key)}\nΠΕΡΙΓΡΑΦΗ: {value.strip()}\n----------\n\n"
+    query_embedding = embedding_model.encode("query: " + user_query, convert_to_tensor=True)
+    cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
+    vector_ranking = np.argsort(cos_scores.cpu().numpy())[::-1]
 
-    system_instruction = (
-        "Είσαι ένας έμπειρος τεχνικός IT. Ανάλυσε ΠΡΟΣΕΚΤΙΚΑ τη λίστα εγγράφων που θα σου δοθεί. "
-        "Πρέπει να βρεις τους τίτλους που σχετίζονται ΑΚΡΙΒΩΣ με το πρόβλημα του χρήστη. "
-        "Απάντησε ΑΠΟΚΛΕΙΣΤΙΚΑ σε JSON μορφή χωρίς άλλο κείμενο."
-    )
+    tokenized_query = tokenize_greek(user_query)
+    bm25_scores = bm25.get_scores(tokenized_query)
+    bm25_ranking = np.argsort(bm25_scores)[::-1]
 
-    user_content = f"""ΕΡΩΤΗΣΗ ΧΡΗΣΤΗ: "{clean_text(user_query)}"
+    rrf_k = 60
+    rrf_scores = {i: 0.0 for i in range(len(filenames))}
 
-    ΛΙΣΤΑ ΕΓΓΡΑΦΩΝ ΠΡΟΣ ΑΝΑΛΥΣΗ:
-    {s}
+    for rank, doc_idx in enumerate(vector_ranking):
+        rrf_scores[doc_idx] += 1.0 / (rrf_k + rank + 1)
+        
+    for rank, doc_idx in enumerate(bm25_ranking):
+        rrf_scores[doc_idx] += 1.0 / (rrf_k + rank + 1)
 
-    ΟΔΗΓΙΑ: Βρες τους {k} πιο σχετικούς τίτλους. 
-    Απάντησε σε JSON: {{ "1": "Τίτλος 1", "2": "Τίτλος 2" ... }}"""
-
-    response = await client.chat(
-        model="gemma3:4b-it-q4_K_M",
-        messages=[
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": user_content}
-        ],
-        format="json",
-        options={
-            "temperature": 0,
-            "seed": 42
-        }
-    )
-
-    answer_raw = response['message']['content']
-    all_files = db_helper.select_all_nimts_filenames_docs()
-
-    best_file_paths = []
-    for i in range(1, k+1):
-        best_file_paths.append(find_most_similar(str(json.loads(answer_raw)[str(i)]), all_files))
+    sorted_indices = sorted(rrf_scores.keys(), key=lambda idx: rrf_scores[idx], reverse=True)
+    top_k_indices = sorted_indices[:k]
     
-    best_match = best_file_paths[0]
-    # returns the most relevant guide (all of it):
-    return db_helper.select_all_nimts_text_docs(best_match), best_file_paths
+    best_file_paths = [filenames[idx] for idx in top_k_indices]
+    
+    # --- ΔΙΟΡΘΩΣΗ: XML Formatting & Truncation ---
+    combined_context = ""
+    for i, path in enumerate(best_file_paths):
+        doc_text = db_helper.select_all_nimts_text_docs(path)
+        
+        # Περιορίζουμε το μέγεθος κάθε εγγράφου στους ~6000 χαρακτήρες 
+        # για να μην κρασάρει η μνήμη του μικρού μοντέλου
+        if len(doc_text) > 6000:
+            doc_text = doc_text[:6000] + "\n...[Το κείμενο συνεχίζεται στο πρωτότυπο αρχείο]..."
+            
+        # Χρήση XML tags για να αναγκάσουμε το LLM να το δει ως ξεχωριστή οντότητα
+        combined_context += f'<document id="{i+1}" title="{Path(path).stem}">\n{doc_text}\n</document>\n\n'
+    
+    return combined_context, best_file_paths
 
-async def query_db(user_query, base_server_url: str = None):
+# --- ΝΕΕΣ ΣΥΝΑΡΤΗΣΕΙΣ ΓΙΑ ΤΟ 2-STEP UI ---
+
+async def get_documents(user_query, base_server_url: str = None):
+    """Βήμα 1: Επιστρέφει ακαριαία τα σχετικά έγγραφα"""
     result = await question_db(user_query)
     context, ranks = result[0], result[1]
-    client = AsyncClient()
-
-    prompt = f"""
-        Είσαι ένας έμπειρος τεχνικός υποστήριξης IT. 
-        Χρησιμοποίησε ΑΠΟΚΛΕΙΣΤΙΚΑ τις παρακάτω πληροφορίες για να δώσεις μια ΑΜΕΣΗ και ΑΝΑΛΥΤΙΚΗ λύση στον χρήστη.
-        
-        ΚΑΝΟΝΕΣ:
-        1. ΜΗΝ λες στον χρήστη "διαβάστε το αρχείο" ή "ακολουθήστε τα βήματα στο κείμενο".
-        2. Εξήγησε τα βήματα ΕΔΩ στην απάντηση σου με bullet points.
-        3. Απάντησε στα ελληνικά.
-    
-        Περιεχόμενο Εγγράφου:
-        {context}
-
-        Ερώτηση Χρήστη:
-        {clean_text(user_query)}
-    """
-
-    response = await client.chat( # Προσθήκη await
-        model="gemma3:4b-it-q4_K_M",
-        messages=[{"role": "user", "content": prompt}],
-        options={
-            "temperature": 0,
-            "seed": 42
-        }
-    )
     
     links_section = "Σχετικά έγγραφα:\n"
     for i, file_path in enumerate(ranks, 1):
         clickable = make_clickable_link(file_path, base_server_url)
         links_section += f"{i}. {clickable}\n"
+        
+    return context, links_section
 
-    answer = f"\n{links_section}"
-    answer += '=' * 15 + '\n\n' + f"Συνοπτική απάντηση ΑΙ βοηθού:\n{response['message']['content']}".strip()
+async def ask_llm(user_query, context):
+    """Βήμα 2: Αναλαμβάνει το βαρύ κομμάτι του LLM"""
+    client = AsyncClient()
+    # print(context)
+    # --- ΔΙΟΡΘΩΣΗ: Πιο αυστηρό Prompt ---
+    prompt = f"""Είσαι ένας IT Expert. Πρέπει να απαντήσεις στην ερώτηση του χρήστη με βάση τα παρακάτω έγγραφα.
 
-    print(f"\nAssistant: {answer}")
-    return answer
+    ΔΕΔΟΜΕΝΑ (Μέσα σε XML tags):
+    {context}
 
+    ΕΡΩΤΗΣΗ ΧΡΗΣΤΗ: 
+    {clean_text(user_query)}
+
+    ΑΥΣΤΗΡΕΣ ΟΔΗΓΙΕΣ:
+    1. Διάβασε το σχετικό έγγραφο μέχρι το ΤΕΛΟΣ.
+    2. Κατέγραψε ΟΛΑ τα βήματα της διαδικασίας, χωρίς να παραλείψεις κανένα. ΜΗΝ σταματάς στη μέση.
+    3. Αν το έγγραφο αναφέρει εντολές τερματικού (terminal commands) ή κώδικα (π.χ. disable, enable, ipstat), ΠΡΕΠΕΙ υποχρεωτικά να τις γράψεις και αυτές ακριβώς όπως είναι.
+    4. Δώσε κατευθείαν τη λύση με βήματα στα ελληνικά.
+    """
+
+    response = await client.chat(
+        model="gemma4:e2b-it-q4_K_M",
+        messages=[{"role": "user", "content": prompt}],
+        options={
+            "temperature": 0, 
+            "seed": 42,
+            "num_ctx": 8192  
+        }
+    )
+    
+    return response['message']['content'].strip()
+
+# Αν τρέξει αυτόνομα στο τερματικό
 if __name__ == "__main__":    
     parser = argparse.ArgumentParser()
     parser.add_argument("-q", "--query", type=str, help="The question to ask.")
-    
     args = parser.parse_args()
 
+    initialize_hybrid_retriever()
     if args.query:
-        # Αντί για query_db(args.query), χρησιμοποιούμε το asyncio.run()
-        asyncio.run(query_db(args.query))
+        # Simulator για το τερματικό
+        async def terminal_sim():
+            ctx, links = await get_documents(args.query)
+            print(f"\n{links}\n...Generating AI response...\n")
+            ans = await ask_llm(args.query, ctx)
+            print(f"Απάντηση:\n{ans}")
+        asyncio.run(terminal_sim())
