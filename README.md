@@ -15,7 +15,7 @@ NIMTSgpt is a specialized Retrieval-Augmented Generation (RAG) pipeline designed
 1.  **LibreOffice:** Required for Word-to-PDF conversion. Ensure `soffice` is in your system PATH.
 2.  **Ollama:** Install [Ollama](https://ollama.ai/) and pull the quantisized model:
     ```bash
-    ollama pull gemma3:4b-it-q4_K_M
+    ollama pull gemma4:e2b-it-q4_K_M
     ```
 
 ## 📂 Project Structure
