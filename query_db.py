@@ -90,10 +90,21 @@ async def question_db(user_query, k=3):
     top_k_indices = sorted_indices[:k]
     
     best_file_paths = [filenames[idx] for idx in top_k_indices]
-    best_match = best_file_paths[0]
     
-    return db_helper.select_all_nimts_text_docs(best_match), best_file_paths
-
+    # --- ΔΙΟΡΘΩΣΗ: XML Formatting & Truncation ---
+    combined_context = ""
+    for i, path in enumerate(best_file_paths):
+        doc_text = db_helper.select_all_nimts_text_docs(path)
+        
+        # Περιορίζουμε το μέγεθος κάθε εγγράφου στους ~6000 χαρακτήρες 
+        # για να μην κρασάρει η μνήμη του μικρού μοντέλου
+        if len(doc_text) > 6000:
+            doc_text = doc_text[:6000] + "\n...[Το κείμενο συνεχίζεται στο πρωτότυπο αρχείο]..."
+            
+        # Χρήση XML tags για να αναγκάσουμε το LLM να το δει ως ξεχωριστή οντότητα
+        combined_context += f'<document id="{i+1}" title="{Path(path).stem}">\n{doc_text}\n</document>\n\n'
+    
+    return combined_context, best_file_paths
 
 # --- ΝΕΕΣ ΣΥΝΑΡΤΗΣΕΙΣ ΓΙΑ ΤΟ 2-STEP UI ---
 
@@ -112,26 +123,31 @@ async def get_documents(user_query, base_server_url: str = None):
 async def ask_llm(user_query, context):
     """Βήμα 2: Αναλαμβάνει το βαρύ κομμάτι του LLM"""
     client = AsyncClient()
-    prompt = f"""
-        Είσαι ένας έμπειρος τεχνικός υποστήριξης IT. 
-        Χρησιμοποίησε ΑΠΟΚΛΕΙΣΤΙΚΑ τις παρακάτω πληροφορίες για να δώσεις μια ΑΜΕΣΗ και ΑΝΑΛΥΤΙΚΗ λύση στον χρήστη.
-        
-        ΚΑΝΟΝΕΣ:
-        1. ΜΗΝ λες στον χρήστη "διαβάστε το αρχείο" ή "ακολουθήστε τα βήματα στο κείμενο".
-        2. Εξήγησε τα βήματα ΕΔΩ στην απάντηση σου με bullet points.
-        3. Απάντησε στα ελληνικά.
-    
-        Περιεχόμενο Εγγράφου:
-        {context}
+    # print(context)
+    # --- ΔΙΟΡΘΩΣΗ: Πιο αυστηρό Prompt ---
+    prompt = f"""Είσαι ένας IT Expert. Πρέπει να απαντήσεις στην ερώτηση του χρήστη με βάση τα παρακάτω έγγραφα.
 
-        Ερώτηση Χρήστη:
-        {clean_text(user_query)}
+    ΔΕΔΟΜΕΝΑ (Μέσα σε XML tags):
+    {context}
+
+    ΕΡΩΤΗΣΗ ΧΡΗΣΤΗ: 
+    {clean_text(user_query)}
+
+    ΑΥΣΤΗΡΕΣ ΟΔΗΓΙΕΣ:
+    1. Διάβασε το σχετικό έγγραφο μέχρι το ΤΕΛΟΣ.
+    2. Κατέγραψε ΟΛΑ τα βήματα της διαδικασίας, χωρίς να παραλείψεις κανένα. ΜΗΝ σταματάς στη μέση.
+    3. Αν το έγγραφο αναφέρει εντολές τερματικού (terminal commands) ή κώδικα (π.χ. disable, enable, ipstat), ΠΡΕΠΕΙ υποχρεωτικά να τις γράψεις και αυτές ακριβώς όπως είναι.
+    4. Δώσε κατευθείαν τη λύση με βήματα στα ελληνικά.
     """
 
     response = await client.chat(
         model="gemma4:e2b-it-q4_K_M",
         messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0, "seed": 42}
+        options={
+            "temperature": 0, 
+            "seed": 42,
+            "num_ctx": 8192  
+        }
     )
     
     return response['message']['content'].strip()

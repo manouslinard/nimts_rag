@@ -103,7 +103,7 @@ HTML = """
                 const botBox = document.getElementById(botMsgId);
                 botBox.innerHTML = searchData.links + 
                     `\\n======================\\n\\n` + 
-                    `<div class="loading-text">Ο AI Βοηθός διαβάζει τα έγγραφα και συντάσσει απάντηση<span class="loading"></span></div>`;
+                    `<div class="loading-text">Ο AI Βοηθός συντάσσει απάντηση<span class="loading"></span></div>`;
                 chat.scrollTop = chat.scrollHeight;
 
                 // ΒΗΜΑ 2: Ζητάμε την απάντηση του LLM (Αργό)
