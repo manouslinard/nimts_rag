@@ -2,7 +2,7 @@
 
 NIMTSgpt is a specialized Retrieval-Augmented Generation (RAG) pipeline designed to process technical IT support documentation and provide intelligent, context-aware answers. It features an automated document conversion engine and a local LLM backend via Ollama.
 
-
+Database with guides for nimts it support has not been uploaded on github, due to privacy reasons.
 
 ## 🚀 Features
 * **Multi-Format Processing:** Automatically converts legacy `.doc` and `.docx` files to PDF using LibreOffice.
